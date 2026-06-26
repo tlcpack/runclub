@@ -60,12 +60,13 @@
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/gridjs/dist/gridjs.umd.js"></script>
     <script>
-        // 1. Publish your Google Sheet: File > Share > Publish to web > (sheet) > CSV.
-        // 2. Paste the generated ...output=csv URL below.
-        // Expected sheet columns (header row): Name, Date, Distance, Time
+        // Reads the sheet's CSV export endpoint directly (CORS-enabled).
+        // The sheet must be shared as "Anyone with the link > Viewer".
+        // URL shape: .../spreadsheets/d/<SHEET_ID>/export?format=csv&gid=<TAB_GID>
+        // Expected columns (header row): Name, Date, Distance, Time
         //   Distance: one of 100m, 200m, 400m, 1 mi
         //   Time:     seconds ("13.4") or minutes:seconds ("5:42.0")
-        const CSV_URL = 'PASTE_YOUR_PUBLISHED_CSV_URL_HERE';
+        const CSV_URL = 'https://docs.google.com/spreadsheets/d/1IFA5fZaxw9pS1RcAFGCAyYFpBnNnUmIeQVA9MDxnzPM/export?format=csv&gid=0';
 
         // Distance label -> length in meters, used to compute pace per mile.
         const DISTANCES = {
@@ -206,7 +207,11 @@
                 if (!res.ok) throw new Error('HTTP ' + res.status);
                 const csv = await res.text();
 
-                const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
+                const parsed = Papa.parse(csv, {
+                    header: true,
+                    skipEmptyLines: true,
+                    transformHeader: (h) => h.trim(),
+                });
 
                 recordsByDistance = {};
                 Object.keys(DISTANCES).forEach((d) => (recordsByDistance[d] = []));

@@ -21,18 +21,22 @@ Make a sheet with this header row (exact names matter):
 - **Time** is seconds (`13.4`) or minutes:seconds (`5:42.0`)
 - **Pace is computed for you** — don't add a Pace column.
 
-### 2. Publish it as CSV
+### 2. Share it publicly
 
-`File > Share > Publish to web` → choose the sheet → **Comma-separated values (.csv)** → **Publish**.
-Copy the generated URL (ends in `output=csv`).
+`Share` → **General access** → **Anyone with the link** → **Viewer**.
+The site reads the sheet's CSV export endpoint, which requires this.
 
 ### 3. Wire it up
 
-In `index.html`, set:
+In `index.html`, set `CSV_URL` to the sheet's CSV export URL:
 
 ```js
-const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/.../pub?output=csv';
+const CSV_URL = 'https://docs.google.com/spreadsheets/d/<SHEET_ID>/export?format=csv&gid=<TAB_GID>';
 ```
+
+`<SHEET_ID>` and `<TAB_GID>` come from the normal edit URL
+(`.../spreadsheets/d/<SHEET_ID>/edit?gid=<TAB_GID>`). Header whitespace is
+tolerated, so stray trailing spaces in column names won't break parsing.
 
 ### 4. Enable GitHub Pages
 
