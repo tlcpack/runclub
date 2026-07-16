@@ -10,33 +10,38 @@ leaderboard. No database, no server.
 
 ## Setup
 
-### 1. Create the Google Sheet
+### 1. The Google Sheet
 
-Make a sheet with this header row (exact names matter):
+The workbook has one tab per distance (`100m`, `400m`, `800m`, `1 Mile`),
+each wide-format with one row per runner:
 
-| Name | Date | Distance | Time |
-|------|------|----------|------|
+| Bib No. | Runner | Week 1 (07/08/26) | Week 2 | … | Week 8 | Personal Best | Improvement |
+|---------|--------|-------------------|--------|---|--------|---------------|-------------|
 
-- **Distance** must be one of: `100m`, `200m`, `400m`, `1 mi`
-- **Time** is seconds (`13.4`) or minutes:seconds (`5:42.0`)
+- Week columns are matched by header (`Week <n>`, with an optional `(date)`
+  that shows up in the site's week filter).
+- `Personal Best` / `Improvement` are ignored — the site computes bests itself.
+- Times are parsed by shape: `1:57:19` → 1:57.19 (minutes:seconds:hundredths),
+  `5:42.0` → minutes:seconds, plain numbers are seconds on sprints (`13.91`)
+  and minutes.seconds shorthand on 800m / 1 Mile (`8.19` → 8:19, `4` → 4:00).
 - **Pace is computed for you** — don't add a Pace column.
+- The **Master Roster** tab (parent contact info) is never fetched by the site.
 
 ### 2. Share it publicly
 
 `Share` → **General access** → **Anyone with the link** → **Viewer**.
-The site reads the sheet's CSV export endpoint, which requires this.
+The site reads the sheet's gviz CSV endpoint, which requires this.
 
 ### 3. Wire it up
 
-In `index.html`, set `CSV_URL` to the sheet's CSV export URL:
+In `index.html`, set `SHEET_ID` (from the edit URL,
+`.../spreadsheets/d/<SHEET_ID>/edit`). Tabs are fetched by name via:
 
 ```js
-const CSV_URL = 'https://docs.google.com/spreadsheets/d/<SHEET_ID>/export?format=csv&gid=<TAB_GID>';
+'https://docs.google.com/spreadsheets/d/' + SHEET_ID + '/gviz/tq?tqx=out:csv&sheet=' + encodeURIComponent(sheet);
 ```
 
-`<SHEET_ID>` and `<TAB_GID>` come from the normal edit URL
-(`.../spreadsheets/d/<SHEET_ID>/edit?gid=<TAB_GID>`). Header whitespace is
-tolerated, so stray trailing spaces in column names won't break parsing.
+so tab names in the sheet must match the keys of the `DISTANCES` map.
 
 ### 4. Enable GitHub Pages
 

@@ -60,32 +60,49 @@
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/gridjs/dist/gridjs.umd.js"></script>
     <script>
-        // Reads the sheet's CSV export endpoint directly (CORS-enabled).
-        // The sheet must be shared as "Anyone with the link > Viewer".
-        // URL shape: .../spreadsheets/d/<SHEET_ID>/export?format=csv&gid=<TAB_GID>
-        // Expected columns (header row): Name, Date, Distance, Time
-        //   Distance: one of 100m, 200m, 400m, 1 mi
-        //   Time:     seconds ("13.4") or minutes:seconds ("5:42.0")
-        const CSV_URL = 'https://docs.google.com/spreadsheets/d/1IFA5fZaxw9pS1RcAFGCAyYFpBnNnUmIeQVA9MDxnzPM/export?format=csv&gid=0';
+        // Reads each distance tab of the club workbook via the gviz CSV
+        // endpoint (CORS-enabled). The workbook must be shared as
+        // "Anyone with the link > Viewer".
+        // Tabs are wide-format, one row per runner:
+        //   Bib No., Runner, Week 1 (07/08/26), Week 2 ... Week 8, Personal Best, Improvement
+        // Only the distance tabs are fetched — the Master Roster tab holds
+        // parent contact info and must never be loaded here.
+        const SHEET_ID = '1F4maKMDDvPjXqvpW65AFTvzTYMAc-qFr';
+        const csvUrl = (sheet) =>
+            'https://docs.google.com/spreadsheets/d/' + SHEET_ID +
+            '/gviz/tq?tqx=out:csv&sheet=' + encodeURIComponent(sheet);
 
-        // Distance label -> length in meters, used to compute pace per mile.
+        // Tab name -> length in meters, used to compute pace per mile.
         const DISTANCES = {
             '100m': 100,
             '400m': 400,
             '800m': 800,
-            '1 mi': 1609.34,
+            '1 Mile': 1609.34,
         };
         const MILE_METERS = 1609.34;
 
-        // "13.4" -> 13.4 ; "5:42.0" -> 342 ; returns NaN if unparseable.
-        function parseTime(raw) {
+        // Times are entered inconsistently, so parse by shape:
+        //   "1:57:19"  -> minutes:seconds:hundredths (1:57.19)
+        //   "5:42.0"   -> minutes:seconds
+        //   "13.91"    -> plain seconds on sprints (under 800m)
+        //   "8.19", "4" on 800m / 1 Mile -> minutes.seconds shorthand (8:19, 4:00)
+        function parseTime(raw, meters) {
             if (raw == null) return NaN;
             const str = String(raw).trim();
             if (str === '') return NaN;
-            const parts = str.split(':').map(Number);
-            if (parts.some(isNaN) || parts.length === 0 || parts.length > 2) return NaN;
-            const total = parts.length === 2 ? parts[0] * 60 + parts[1] : parts[0];
-            return total > 0 ? total : NaN;
+            if (str.includes(':')) {
+                const parts = str.split(':').map(Number);
+                if (parts.some(isNaN)) return NaN;
+                let total = NaN;
+                if (parts.length === 2) total = parts[0] * 60 + parts[1];
+                if (parts.length === 3) total = parts[0] * 60 + parts[1] + parts[2] / 100;
+                return total > 0 ? total : NaN;
+            }
+            const n = Number(str);
+            if (isNaN(n) || n <= 0) return NaN;
+            if (meters < 800) return n;
+            const [min, sec = '0'] = str.split('.');
+            return Number(min) * 60 + Number(sec.padEnd(2, '0').slice(0, 2));
         }
 
         // seconds -> "1:05.2" (drops minutes when under a minute)
@@ -110,16 +127,16 @@
 
         let grid = null;
         let recordsByDistance = {};
-        let allDates = [];
+        let weeks = []; // weeks that have at least one time, latest first: [{num, date}]
         let activeDistance = Object.keys(DISTANCES)[0];
-        let activeDate = ALL_TIME;
+        let activeWeek = ALL_TIME;
 
         // Reduce a distance's records to one row per runner (their best time),
-        // optionally restricted to a single date.
-        function bestPerRunner(records, date) {
+        // optionally restricted to a single week.
+        function bestPerRunner(records, week) {
             const best = new Map();
             records.forEach((r) => {
-                if (date !== ALL_TIME && r.date !== date) return;
+                if (week !== ALL_TIME && String(r.week) !== week) return;
                 const existing = best.get(r.name);
                 if (!existing || r.seconds < existing.seconds) best.set(r.name, r);
             });
@@ -128,7 +145,7 @@
 
         function renderTable() {
             const meters = DISTANCES[activeDistance];
-            const rows = bestPerRunner(recordsByDistance[activeDistance] || [], activeDate)
+            const rows = bestPerRunner(recordsByDistance[activeDistance] || [], activeWeek)
                 .sort((a, b) => a.seconds - b.seconds)
                 .map((r, i) => [
                     i + 1,                                  // rank (default time-sorted)
@@ -147,7 +164,6 @@
                 data: rows,
                 search: true,
                 sort: true,
-                pagination: { limit: 15 },
                 language: {
                     search: { placeholder: 'Search runner…' },
                     noRecordsFound: 'No times recorded for this distance yet.',
@@ -162,19 +178,22 @@
             }
         }
 
-        function buildDateFilter() {
+        function buildWeekFilter() {
             const sel = document.getElementById('date-filter');
             sel.innerHTML = '';
-            const opts = [['All-time best', ALL_TIME], ...allDates.map((d) => [d, d])];
+            const opts = [
+                ['All-time best', ALL_TIME],
+                ...weeks.map((w) => ['Week ' + w.num + (w.date ? ' · ' + w.date : ''), String(w.num)]),
+            ];
             opts.forEach(([label, value]) => {
                 const o = document.createElement('option');
                 o.value = value;
                 o.textContent = label;
                 sel.appendChild(o);
             });
-            sel.value = activeDate;
+            sel.value = activeWeek;
             sel.onchange = () => {
-                activeDate = sel.value;
+                activeWeek = sel.value;
                 renderTable();
             };
         }
@@ -196,50 +215,62 @@
             });
         }
 
-        async function init() {
-            if (CSV_URL.startsWith('PASTE_')) {
-                document.getElementById('status').textContent =
-                    'Set CSV_URL in index.html to your published Google Sheet CSV link.';
-                return;
-            }
-            try {
-                const res = await fetch(CSV_URL);
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                const csv = await res.text();
+        // Turn one distance tab's CSV into records: {name, week, weekDate, seconds}.
+        // Week columns are found by header ("Week 3", "Week 1 (07/08/26)");
+        // Personal Best / Improvement are recomputed here, not read.
+        function parseTab(csv, meters) {
+            const rows = Papa.parse(csv, { skipEmptyLines: true }).data;
+            if (!rows.length) return [];
+            const header = rows[0].map((h) => String(h).trim());
+            const nameIdx = header.indexOf('Runner');
+            const weekCols = [];
+            header.forEach((h, i) => {
+                const m = h.match(/^Week\s*(\d+)(?:\s*\((.*?)\))?/i);
+                if (m) weekCols.push({ idx: i, num: Number(m[1]), date: m[2] || '' });
+            });
+            if (nameIdx === -1 || !weekCols.length) return [];
 
-                const parsed = Papa.parse(csv, {
-                    header: true,
-                    skipEmptyLines: true,
-                    transformHeader: (h) => h.trim(),
+            const records = [];
+            rows.slice(1).forEach((row) => {
+                const name = String(row[nameIdx] || '').trim();
+                if (!name) return;
+                weekCols.forEach((w) => {
+                    const seconds = parseTime(row[w.idx], meters);
+                    if (!isFinite(seconds)) return;
+                    records.push({ name, week: w.num, weekDate: w.date, seconds });
                 });
+            });
+            return records;
+        }
+
+        async function init() {
+            try {
+                const names = Object.keys(DISTANCES);
+                const csvs = await Promise.all(names.map(async (n) => {
+                    const res = await fetch(csvUrl(n));
+                    if (!res.ok) throw new Error('HTTP ' + res.status + ' loading ' + n);
+                    return res.text();
+                }));
 
                 recordsByDistance = {};
-                Object.keys(DISTANCES).forEach((d) => (recordsByDistance[d] = []));
-                const dateSet = new Set();
-
-                parsed.data.forEach((row) => {
-                    const dist = (row.Distance || '').trim();
-                    const seconds = parseTime(row.Time);
-                    if (!DISTANCES[dist] || !isFinite(seconds)) return;
-                    const date = (row.Date || '').trim();
-                    if (date) dateSet.add(date);
-                    recordsByDistance[dist].push({
-                        name: (row.Name || '').trim(),
-                        date,
-                        seconds,
+                const weekMap = new Map(); // week number -> date label (if any tab has one)
+                names.forEach((n, i) => {
+                    const records = parseTab(csvs[i], DISTANCES[n]);
+                    recordsByDistance[n] = records;
+                    records.forEach((r) => {
+                        if (!weekMap.has(r.week) || (r.weekDate && !weekMap.get(r.week))) {
+                            weekMap.set(r.week, r.weekDate);
+                        }
                     });
                 });
 
-                // Most recent first; falls back to string order for non-ISO dates.
-                allDates = [...dateSet].sort((a, b) => {
-                    const ta = Date.parse(a), tb = Date.parse(b);
-                    if (isNaN(ta) || isNaN(tb)) return a < b ? 1 : -1;
-                    return tb - ta;
-                });
+                weeks = [...weekMap.entries()]
+                    .map(([num, date]) => ({ num, date }))
+                    .sort((a, b) => b.num - a.num);
 
                 document.getElementById('status').textContent = '';
                 buildTabs();
-                buildDateFilter();
+                buildWeekFilter();
                 renderTable();
             } catch (err) {
                 console.error('Error loading run data:', err);
